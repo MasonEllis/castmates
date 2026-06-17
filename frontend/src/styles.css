@@ -1,0 +1,206 @@
+:root {
+  /* Surface palette: deep cinema dark with subtle warmth. */
+  --bg: #0a0b10;
+  --bg-grad-1: #0d0f17;
+  --bg-grad-2: #07080d;
+  --bg-elev: #14171f;
+  --bg-elev-2: #1c2029;
+  --bg-elev-3: #262b36;
+  --border: #2a2f3c;
+  --border-strong: #3a4151;
+  --text: #f1f3f8;
+  --text-muted: #97a0b3;
+  --text-soft: #c5cbd8;
+
+  /* Accent: warm IMDB-ish gold, paired with a vivid cinema red for gradients. */
+  --accent: #fbbf24;
+  --accent-2: #f97316;
+  --accent-3: #ef4444;
+  --accent-fg: #0a0b10;
+  --accent-grad: linear-gradient(135deg, #fbbf24 0%, #f97316 55%, #ef4444 100%);
+  --accent-soft: rgba(251, 191, 36, 0.12);
+
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.12);
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.12);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+
+  --transition: 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
+
+  font-family:
+    'Inter',
+    'SF Pro Text',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-feature-settings:
+    'cv02',
+    'cv03',
+    'cv04',
+    'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(
+      1200px 700px at 12% -10%,
+      rgba(251, 191, 36, 0.08),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 600px at 100% 0%,
+      rgba(239, 68, 68, 0.06),
+      transparent 65%
+    ),
+    radial-gradient(
+      900px 700px at 50% 110%,
+      rgba(99, 102, 241, 0.06),
+      transparent 60%
+    ),
+    linear-gradient(180deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
+  background-attachment: fixed;
+  min-height: 100%;
+}
+
+/* Sleek selection. */
+::selection {
+  background: rgba(251, 191, 36, 0.35);
+  color: var(--text);
+}
+
+/* Buttons --------------------------------------------------------- */
+
+button {
+  font: inherit;
+  color: var(--accent-fg);
+  background: var(--accent);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 18px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    transform var(--transition),
+    box-shadow var(--transition),
+    background var(--transition),
+    color var(--transition),
+    border-color var(--transition),
+    filter var(--transition);
+}
+
+button:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px rgba(251, 191, 36, 0.6);
+}
+
+/* Inputs ---------------------------------------------------------- */
+
+input {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  width: 100%;
+  outline: none;
+  transition:
+    border-color var(--transition),
+    background var(--transition),
+    box-shadow var(--transition);
+}
+
+input::placeholder {
+  color: #6f7689;
+}
+
+input:hover {
+  border-color: var(--border-strong);
+}
+
+input:focus {
+  border-color: rgba(251, 191, 36, 0.75);
+  box-shadow: 0 0 0 4px rgba(251, 191, 36, 0.12);
+  background: var(--bg-elev-2);
+}
+
+/* Links ----------------------------------------------------------- */
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--transition);
+}
+
+a:hover {
+  color: #ffd76a;
+}
+
+/* Scrollbar (webkit) --------------------------------------------- */
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--bg-elev-3);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
