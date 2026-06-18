@@ -29,11 +29,13 @@ from imdbinfo.services import (
 )
 import imdbinfo.services as _imdb_services
 
+from . import db
 from .models import (
     ActorEpisodesResult,
     CastMember,
     EpisodeAppearance,
     OverlapResult,
+    PersonTitlesResult,
     SharedActor,
     TitleDetail,
     TitleHit,
@@ -42,11 +44,11 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-# Pin WAF cookie storage to backend/.cache regardless of process cwd.
+# Pin WAF cookie storage to backend/data regardless of process cwd.
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
-_WAF_CACHE_DIR = _BACKEND_ROOT / ".cache" / "imdbinfo"
-_WAF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_imdb_services._WAF_COOKIE_FILE = _WAF_CACHE_DIR / "waf_cookies.json"
+_WAF_COOKIE_DIR = db.DATA_DIR / "imdbinfo"
+_WAF_COOKIE_DIR.mkdir(parents=True, exist_ok=True)
+_imdb_services._WAF_COOKIE_FILE = _WAF_COOKIE_DIR / "waf_cookies.json"
 
 _RETRYABLE_STATUS = frozenset({202, 429, 503})
 
@@ -303,8 +305,15 @@ def _episode_cast_person_ids(episode_id: str) -> set[str]:
     if cached is not None:
         return cached
 
+    stored = db.get_episode_cast_ids(norm)
+    if stored is not None:
+        with _episode_cast_ids_cache_lock:
+            _episode_cast_ids_cache[norm] = stored
+        return stored
+
     members = _fetch_full_cast(norm)
     person_ids = {member.imdb_id for member in members}
+    db.upsert_episode_cast_ids(norm, person_ids)
     with _episode_cast_ids_cache_lock:
         _episode_cast_ids_cache[norm] = person_ids
     return person_ids
@@ -346,6 +355,12 @@ def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[Episode
     if cached is not None:
         return cached
 
+    stored = db.get_actor_episodes(norm_title, norm_person)
+    if stored is not None:
+        with _episode_cache_lock:
+            _episode_cache[cache_key] = stored
+        return stored
+
     series_episodes = _get_series_episodes(norm_title)
     appearances: list[EpisodeAppearance] = []
 
@@ -362,6 +377,7 @@ def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[Episode
 
     appearances.sort(key=lambda item: (item.season, item.episode))
 
+    db.upsert_actor_episodes(norm_title, norm_person, appearances)
     with _episode_cache_lock:
         _episode_cache[cache_key] = appearances
     return appearances
@@ -398,13 +414,20 @@ def search_titles(query: str, limit: int = 8) -> list[TitleHit]:
 def get_title_with_cast(imdb_id: str) -> TitleDetail:
     """Fetch a title (movie or TV series) and its top-billed cast.
 
-    Results are cached in-process for the lifetime of the server.
+    Results are read from SQLite when available (7-day retention), else fetched
+    from IMDB and stored. An in-process layer avoids repeat reads per request.
     """
     norm = _normalize_id(imdb_id)
     with _title_cache_lock:
         cached = _title_cache.get(norm)
     if cached is not None:
         return cached
+
+    stored = db.get_title_detail(norm)
+    if stored is not None:
+        with _title_cache_lock:
+            _title_cache[norm] = stored
+        return stored
 
     movie = _imdb_get_movie(norm)
     if movie is None:
@@ -449,9 +472,16 @@ def get_title_with_cast(imdb_id: str) -> TitleDetail:
         cast=members,
     )
 
+    db.upsert_title_detail(detail)
     with _title_cache_lock:
         _title_cache[norm] = detail
     return detail
+
+
+def get_person_titles(person_id: str) -> PersonTitlesResult:
+    """Return titles this actor appears in, from stored cast credits."""
+    norm = _normalize_id(person_id)
+    return db.get_person_titles(norm)
 
 
 def overlap(ids: list[str]) -> OverlapResult:

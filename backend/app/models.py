@@ -44,6 +44,13 @@ class CastMember(BaseModel):
         None,
         description="Number of episodes the actor appears in. None for movies.",
     )
+    episode_list: list[EpisodeAppearance] | None = Field(
+        None,
+        description=(
+            "Episode appearances for this actor in a TV title, when stored. "
+            "None when episode data has not been resolved yet."
+        ),
+    )
 
 
 class TitleDetail(BaseModel):
@@ -86,6 +93,33 @@ class ActorEpisodesResult(BaseModel):
     title_id: str
     person_id: str
     episodes: list[EpisodeAppearance]
+
+
+class PersonTitleCredit(BaseModel):
+    """One title an actor has been observed in via stored cast credits."""
+
+    imdb_id: str
+    title: str
+    year: int | None = None
+    kind: str | None = None
+    poster_url: str | None = None
+    role: str | None = None
+    episodes: int | None = None
+    episode_list: list[EpisodeAppearance] | None = Field(
+        None,
+        description=(
+            "Episode appearances in this TV title, when stored. "
+            "None when episode data has not been resolved yet."
+        ),
+    )
+
+
+class PersonTitlesResult(BaseModel):
+    """Titles an actor appears in, derived from ``title_cast`` rows."""
+
+    person_id: str
+    name: str | None = None
+    titles: list[PersonTitleCredit] = Field(default_factory=list)
 
 
 class OverlapResult(BaseModel):
