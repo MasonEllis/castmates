@@ -12,7 +12,7 @@ import type { EpisodeAppearance } from '../types'
 
 const props = defineProps<{
   titleId: string
-  personId: string
+  actorId: string
   episodeCount?: number | null
   /** When true, episode panel opens automatically (e.g. table detail row). */
   autoOpen?: boolean
@@ -25,7 +25,7 @@ const episodes = ref<EpisodeAppearance[] | null>(null)
 const activeSeason = ref<number | null>(null)
 
 function cacheKey(): string {
-  return `${props.titleId}:${props.personId}`
+  return `${props.titleId}:${props.actorId}`
 }
 
 const seasons = computed(() => {
@@ -103,7 +103,7 @@ async function loadEpisodes(): Promise<void> {
   loading.value = true
   error.value = null
 
-  const request = getActorEpisodes(props.titleId, props.personId)
+  const request = getActorEpisodes(props.titleId, props.actorId)
     .then((result) => {
       episodeCache.set(key, result.episodes)
       episodeInflight.delete(key)

@@ -35,7 +35,7 @@ from .models import (
     CastMember,
     EpisodeAppearance,
     OverlapResult,
-    PersonTitlesResult,
+    ActorTitlesResult,
     SharedActor,
     TitleDetail,
     TitleHit,
@@ -173,17 +173,17 @@ def _project_title_hit(brief: Any) -> TitleHit | None:
     )
 
 
-def _project_cast_member(person: Any) -> CastMember | None:
+def _project_cast_member(actor: Any) -> CastMember | None:
     """Project an imdbinfo ``CastMember`` into our own ``CastMember`` DTO."""
-    person_id = getattr(person, "imdb_id", None)
-    name = getattr(person, "name", None)
-    if not person_id or not name:
+    actor_id = getattr(actor, "imdb_id", None)
+    name = getattr(actor, "name", None)
+    if not actor_id or not name:
         return None
     return CastMember(
-        imdb_id=str(person_id),
+        imdb_id=str(actor_id),
         name=str(name),
-        role=_role_from_characters(getattr(person, "characters", None)),
-        headshot_url=getattr(person, "picture_url", None) or None,
+        role=_role_from_characters(getattr(actor, "characters", None)),
+        headshot_url=getattr(actor, "picture_url", None) or None,
     )
 
 
@@ -297,8 +297,8 @@ def _get_series_episodes(title_id: str) -> list[Any]:
     return episodes
 
 
-def _episode_cast_person_ids(episode_id: str) -> set[str]:
-    """Return the cast person ids credited on a single episode (cached)."""
+def _episode_cast_actor_ids(episode_id: str) -> set[str]:
+    """Return the actor ids credited on a single episode (cached)."""
     norm = _normalize_id(episode_id)
     with _episode_cast_ids_cache_lock:
         cached = _episode_cast_ids_cache.get(norm)
@@ -312,11 +312,11 @@ def _episode_cast_person_ids(episode_id: str) -> set[str]:
         return stored
 
     members = _fetch_full_cast(norm)
-    person_ids = {member.imdb_id for member in members}
-    db.upsert_episode_cast_ids(norm, person_ids)
+    actor_ids = {member.imdb_id for member in members}
+    db.upsert_episode_cast_ids(norm, actor_ids)
     with _episode_cast_ids_cache_lock:
-        _episode_cast_ids_cache[norm] = person_ids
-    return person_ids
+        _episode_cast_ids_cache[norm] = actor_ids
+    return actor_ids
 
 
 def _project_bulk_episode(ep: Any) -> EpisodeAppearance | None:
@@ -340,22 +340,22 @@ def _project_bulk_episode(ep: Any) -> EpisodeAppearance | None:
     )
 
 
-def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[EpisodeAppearance]:
-    """Return the episodes in which ``person_id`` appears in ``title_id``.
+def fetch_actor_episodes_for_show(title_id: str, actor_id: str) -> list[EpisodeAppearance]:
+    """Return the episodes in which ``actor_id`` appears in ``title_id``.
 
     IMDB's ``?nm=`` filter on the episodes page no longer works, so we load the
     series' episode list once and match against each episode's cast. Episode
     cast and the final per-actor result are cached for the process lifetime.
     """
     norm_title = _normalize_id(title_id)
-    norm_person = _normalize_id(person_id)
-    cache_key = (norm_title, norm_person)
+    norm_actor = _normalize_id(actor_id)
+    cache_key = (norm_title, norm_actor)
     with _episode_cache_lock:
         cached = _episode_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    stored = db.get_actor_episodes(norm_title, norm_person)
+    stored = db.get_actor_episodes(norm_title, norm_actor)
     if stored is not None:
         with _episode_cache_lock:
             _episode_cache[cache_key] = stored
@@ -366,7 +366,7 @@ def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[Episode
 
     def _match_episode(ep: Any) -> EpisodeAppearance | None:
         ep_id = getattr(ep, "imdb_id", None)
-        if not ep_id or norm_person not in _episode_cast_person_ids(str(ep_id)):
+        if not ep_id or norm_actor not in _episode_cast_actor_ids(str(ep_id)):
             return None
         return _project_bulk_episode(ep)
 
@@ -377,20 +377,20 @@ def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[Episode
 
     appearances.sort(key=lambda item: (item.season, item.episode))
 
-    db.upsert_actor_episodes(norm_title, norm_person, appearances)
+    db.upsert_actor_episodes(norm_title, norm_actor, appearances)
     with _episode_cache_lock:
         _episode_cache[cache_key] = appearances
     return appearances
 
 
-def get_actor_episodes(title_id: str, person_id: str) -> ActorEpisodesResult:
-    """Fetch (and cache) the episodes a person appears in for a TV series."""
+def get_actor_episodes(title_id: str, actor_id: str) -> ActorEpisodesResult:
+    """Fetch (and cache) the episodes an actor appears in for a TV series."""
     norm_title = _normalize_id(title_id)
-    norm_person = _normalize_id(person_id)
+    norm_actor = _normalize_id(actor_id)
     return ActorEpisodesResult(
         title_id=norm_title,
-        person_id=norm_person,
-        episodes=fetch_actor_episodes_for_show(norm_title, norm_person),
+        actor_id=norm_actor,
+        episodes=fetch_actor_episodes_for_show(norm_title, norm_actor),
     )
 
 
@@ -455,8 +455,8 @@ def get_title_with_cast(imdb_id: str) -> TitleDetail:
 
     if not members:
         seen_ids: set[str] = set()
-        for person in _extract_cast_from_reference(movie):
-            m = _project_cast_member(person)
+        for actor in _extract_cast_from_reference(movie):
+            m = _project_cast_member(actor)
             if m is None or m.imdb_id in seen_ids:
                 continue
             seen_ids.add(m.imdb_id)
@@ -478,10 +478,10 @@ def get_title_with_cast(imdb_id: str) -> TitleDetail:
     return detail
 
 
-def get_person_titles(person_id: str) -> PersonTitlesResult:
+def get_actor_titles(actor_id: str) -> ActorTitlesResult:
     """Return titles this actor appears in, from stored cast credits."""
-    norm = _normalize_id(person_id)
-    return db.get_person_titles(norm)
+    norm = _normalize_id(actor_id)
+    return db.get_actor_titles(norm)
 
 
 def overlap(ids: list[str]) -> OverlapResult:
@@ -511,7 +511,7 @@ def overlap(ids: list[str]) -> OverlapResult:
     # Fetch every title's projected cast (cache makes repeat calls cheap).
     details: list[TitleDetail] = [get_title_with_cast(n) for n in normalized]
 
-    # casts_by_id[i][person_id] = CastMember projection in title i
+    # casts_by_id[i][actor_id] = CastMember projection in title i
     casts_by_id: list[dict[str, CastMember]] = [
         {m.imdb_id: m for m in d.cast} for d in details
     ]

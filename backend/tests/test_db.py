@@ -21,7 +21,7 @@ def temp_db(tmp_path: Path):
     db.configure_db_path(db.DEFAULT_DB_PATH)
 
 
-def test_title_cast_round_trip_and_person_titles(temp_db: Path) -> None:
+def test_title_cast_round_trip_and_actor_titles(temp_db: Path) -> None:
     detail = TitleDetail(
         imdb_id="0903747",
         title="Breaking Bad",
@@ -53,12 +53,12 @@ def test_title_cast_round_trip_and_person_titles(temp_db: Path) -> None:
     assert len(loaded.cast) == 2
     assert loaded.cast[0].name == "Bryan Cranston"
 
-    person_titles = db.get_person_titles("0002064")
-    assert person_titles.person_id == "0002064"
-    assert len(person_titles.titles) == 1
-    assert person_titles.titles[0].title == "Breaking Bad"
-    assert person_titles.titles[0].role == "Gus Fring"
-    assert person_titles.titles[0].episodes == 26
+    actor_titles = db.get_actor_titles("0002064")
+    assert actor_titles.actor_id == "0002064"
+    assert len(actor_titles.titles) == 1
+    assert actor_titles.titles[0].title == "Breaking Bad"
+    assert actor_titles.titles[0].role == "Gus Fring"
+    assert actor_titles.titles[0].episodes == 26
 
 
 def test_retention_purges_stale_title_cast(temp_db: Path) -> None:
@@ -89,7 +89,7 @@ def test_retention_purges_stale_title_cast(temp_db: Path) -> None:
 
     db.purge_expired()
     assert db.get_title_detail("0212671") is None
-    assert db.get_person_titles("0186505").titles == []
+    assert db.get_actor_titles("0186505").titles == []
 
 
 def test_actor_episodes_and_episode_cast_round_trip(temp_db: Path) -> None:
@@ -116,7 +116,7 @@ def test_empty_actor_episodes_are_stored(temp_db: Path) -> None:
     assert loaded_eps == []
 
 
-def test_episode_lists_surface_on_title_and_person_queries(temp_db: Path) -> None:
+def test_episode_lists_surface_on_title_and_actor_queries(temp_db: Path) -> None:
     detail = TitleDetail(
         imdb_id="0903747",
         title="Breaking Bad",
@@ -158,8 +158,58 @@ def test_episode_lists_surface_on_title_and_person_queries(temp_db: Path) -> Non
     assert cranston.episode_list[0].title == "Pilot"
     assert esposito.episode_list is None
 
-    person_titles = db.get_person_titles("0186505")
-    assert len(person_titles.titles) == 1
-    credit = person_titles.titles[0]
+    actor_titles = db.get_actor_titles("0186505")
+    assert len(actor_titles.titles) == 1
+    credit = actor_titles.titles[0]
     assert credit.episode_list is not None
     assert credit.episode_list[0].imdb_id == "0959621"
+
+
+def test_legacy_person_schema_migrates_to_actor_names(temp_db: Path) -> None:
+    conn = sqlite3.connect(temp_db)
+    conn.executescript(
+        """
+        CREATE TABLE persons (
+            imdb_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            headshot_url TEXT
+        );
+        CREATE TABLE titles (
+            imdb_id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            year INTEGER,
+            kind TEXT,
+            poster_url TEXT,
+            cast_fetched_at TEXT NOT NULL
+        );
+        CREATE TABLE title_cast (
+            title_id TEXT NOT NULL,
+            person_id TEXT NOT NULL,
+            role TEXT,
+            episodes INTEGER,
+            billing_order INTEGER NOT NULL DEFAULT 0,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (title_id, person_id)
+        );
+        """
+    )
+    conn.close()
+
+    db.init_db()
+
+    conn = sqlite3.connect(temp_db)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    assert "actors" in tables
+    assert "persons" not in tables
+    columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(title_cast)").fetchall()
+    }
+    assert "actor_id" in columns
+    assert "person_id" not in columns
+    conn.close()

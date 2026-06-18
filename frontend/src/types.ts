@@ -23,7 +23,7 @@ export interface EpisodeAppearance {
 
 export interface ActorEpisodesResult {
   title_id: string
-  person_id: string
+  actor_id: string
   episodes: EpisodeAppearance[]
 }
 

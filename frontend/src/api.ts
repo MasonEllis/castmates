@@ -39,11 +39,11 @@ export function getOverlap(
 
 export function getActorEpisodes(
   titleId: string,
-  personId: string,
+  actorId: string,
   signal?: AbortSignal,
 ): Promise<ActorEpisodesResult> {
   const u = new URL('/api/actor-episodes', window.location.origin)
   u.searchParams.set('title_id', titleId)
-  u.searchParams.set('person_id', personId)
+  u.searchParams.set('actor_id', actorId)
   return getJson<ActorEpisodesResult>(u.pathname + u.search, signal)
 }

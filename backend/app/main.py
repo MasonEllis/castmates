@@ -15,7 +15,7 @@ from . import db, imdb_service
 from .models import (
     ActorEpisodesResult,
     OverlapResult,
-    PersonTitlesResult,
+    ActorTitlesResult,
     TitleDetail,
     TitleHit,
 )
@@ -65,10 +65,10 @@ async def search(
         raise HTTPException(status_code=502, detail=f"IMDB search failed: {exc}") from exc
 
 
-@app.get("/api/person/{imdb_id}/titles", response_model=PersonTitlesResult)
-async def person_titles(imdb_id: str) -> PersonTitlesResult:
+@app.get("/api/actor/{imdb_id}/titles", response_model=ActorTitlesResult)
+async def actor_titles(imdb_id: str) -> ActorTitlesResult:
     try:
-        return await asyncio.to_thread(imdb_service.get_person_titles, imdb_id)
+        return await asyncio.to_thread(imdb_service.get_actor_titles, imdb_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -90,24 +90,24 @@ async def actor_episodes(
         str,
         Query(min_length=1, description="IMDB series id (digits, no 'tt')."),
     ],
-    person_id: Annotated[
+    actor_id: Annotated[
         str,
-        Query(min_length=1, description="IMDB person id (digits, no 'nm')."),
+        Query(min_length=1, description="IMDB actor id (digits, no 'nm')."),
     ],
 ) -> ActorEpisodesResult:
     try:
         return await asyncio.to_thread(
             imdb_service.get_actor_episodes,
             title_id,
-            person_id,
+            actor_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception(
-            "actor_episodes failed for title_id=%r person_id=%r",
+            "actor_episodes failed for title_id=%r actor_id=%r",
             title_id,
-            person_id,
+            actor_id,
         )
         raise HTTPException(
             status_code=502, detail=f"IMDB episode lookup failed: {exc}"

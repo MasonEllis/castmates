@@ -36,7 +36,7 @@ class EpisodeAppearance(BaseModel):
 class CastMember(BaseModel):
     """One actor as they appear in a single title."""
 
-    imdb_id: str = Field(..., description="IMDB person id without the 'nm' prefix.")
+    imdb_id: str = Field(..., description="IMDB actor id without the 'nm' prefix.")
     name: str
     role: str | None = None
     headshot_url: str | None = None
@@ -88,14 +88,14 @@ class SharedActor(BaseModel):
 
 
 class ActorEpisodesResult(BaseModel):
-    """Episodes in which a person appears within a single TV series."""
+    """Episodes in which an actor appears within a single TV series."""
 
     title_id: str
-    person_id: str
+    actor_id: str
     episodes: list[EpisodeAppearance]
 
 
-class PersonTitleCredit(BaseModel):
+class ActorTitleCredit(BaseModel):
     """One title an actor has been observed in via stored cast credits."""
 
     imdb_id: str
@@ -114,12 +114,12 @@ class PersonTitleCredit(BaseModel):
     )
 
 
-class PersonTitlesResult(BaseModel):
+class ActorTitlesResult(BaseModel):
     """Titles an actor appears in, derived from ``title_cast`` rows."""
 
-    person_id: str
+    actor_id: str
     name: str | None = None
-    titles: list[PersonTitleCredit] = Field(default_factory=list)
+    titles: list[ActorTitleCredit] = Field(default_factory=list)
 
 
 class OverlapResult(BaseModel):

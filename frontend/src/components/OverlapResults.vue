@@ -94,7 +94,7 @@ function titleLabel(t: TitleSummary): string {
   return t.year ? `${t.title} (${t.year})` : t.title
 }
 
-function imdbPersonUrl(id: string): string {
+function imdbActorUrl(id: string): string {
   return `https://www.imdb.com/name/nm${id}/`
 }
 
@@ -311,7 +311,7 @@ function selectSort(e: Event) {
       >
         <a
           class="actor-card__photo"
-          :href="imdbPersonUrl(actor.imdb_id)"
+          :href="imdbActorUrl(actor.imdb_id)"
           target="_blank"
           rel="noopener noreferrer"
           :aria-label="`Open ${actor.name} on IMDB`"
@@ -337,7 +337,7 @@ function selectSort(e: Event) {
         <div class="actor-card__body">
           <a
             class="actor-card__name"
-            :href="imdbPersonUrl(actor.imdb_id)"
+            :href="imdbActorUrl(actor.imdb_id)"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -367,7 +367,7 @@ function selectSort(e: Event) {
               <ActorEpisodeList
                 v-if="isTvTitle(t.kind) && hasEpisodeCount(actor.episodes[i])"
                 :title-id="t.imdb_id"
-                :person-id="actor.imdb_id"
+                :actor-id="actor.imdb_id"
                 :episode-count="actor.episodes[i]"
               />
             </li>
@@ -437,7 +437,7 @@ function selectSort(e: Event) {
             </td>
             <td class="cell-name">
               <a
-                :href="imdbPersonUrl(actor.imdb_id)"
+                :href="imdbActorUrl(actor.imdb_id)"
                 target="_blank"
                 rel="noopener noreferrer"
                 @click.stop
@@ -456,7 +456,7 @@ function selectSort(e: Event) {
               <div class="actor-detail">
                 <a
                   class="actor-detail__photo"
-                  :href="imdbPersonUrl(actor.imdb_id)"
+                  :href="imdbActorUrl(actor.imdb_id)"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -475,7 +475,7 @@ function selectSort(e: Event) {
                 <div class="actor-detail__body">
                   <a
                     class="actor-detail__name"
-                    :href="imdbPersonUrl(actor.imdb_id)"
+                    :href="imdbActorUrl(actor.imdb_id)"
                     target="_blank"
                     rel="noopener noreferrer"
                   >{{ actor.name }} ↗</a>
@@ -499,7 +499,7 @@ function selectSort(e: Event) {
                       >
                         <ActorEpisodeList
                           :title-id="t.imdb_id"
-                          :person-id="actor.imdb_id"
+                          :actor-id="actor.imdb_id"
                           :episode-count="actor.episodes[i]"
                         />
                       </dd>

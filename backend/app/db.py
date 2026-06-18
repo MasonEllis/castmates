@@ -20,8 +20,8 @@ from typing import Iterable
 from .models import (
     CastMember,
     EpisodeAppearance,
-    PersonTitleCredit,
-    PersonTitlesResult,
+    ActorTitleCredit,
+    ActorTitlesResult,
     TitleDetail,
 )
 
@@ -63,11 +63,42 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
+
+
+def _migrate_legacy_person_schema(conn: sqlite3.Connection) -> None:
+    """Rename pre-actor terminology in existing databases."""
+    if _table_exists(conn, "persons") and not _table_exists(conn, "actors"):
+        conn.execute("ALTER TABLE persons RENAME TO actors")
+
+    for table in (
+        "title_cast",
+        "actor_episode_fetches",
+        "actor_episodes",
+        "episode_cast_members",
+    ):
+        if _table_exists(conn, table) and _column_exists(conn, table, "person_id"):
+            conn.execute(f"ALTER TABLE {table} RENAME COLUMN person_id TO actor_id")
+
+    conn.execute("DROP INDEX IF EXISTS idx_title_cast_person")
+
+
 def init_db() -> None:
     """Create tables if needed and purge expired rows."""
     with _lock:
         conn = _connect()
         try:
+            _migrate_legacy_person_schema(conn)
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS titles (
@@ -79,7 +110,7 @@ def init_db() -> None:
                     cast_fetched_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS persons (
+                CREATE TABLE IF NOT EXISTS actors (
                     imdb_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
                     headshot_url TEXT
@@ -87,30 +118,30 @@ def init_db() -> None:
 
                 CREATE TABLE IF NOT EXISTS title_cast (
                     title_id TEXT NOT NULL REFERENCES titles(imdb_id) ON DELETE CASCADE,
-                    person_id TEXT NOT NULL REFERENCES persons(imdb_id) ON DELETE CASCADE,
+                    actor_id TEXT NOT NULL REFERENCES actors(imdb_id) ON DELETE CASCADE,
                     role TEXT,
                     episodes INTEGER,
                     billing_order INTEGER NOT NULL DEFAULT 0,
                     fetched_at TEXT NOT NULL,
-                    PRIMARY KEY (title_id, person_id)
+                    PRIMARY KEY (title_id, actor_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS actor_episode_fetches (
                     title_id TEXT NOT NULL,
-                    person_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
-                    PRIMARY KEY (title_id, person_id)
+                    PRIMARY KEY (title_id, actor_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS actor_episodes (
                     title_id TEXT NOT NULL,
-                    person_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
                     episode_id TEXT NOT NULL,
                     season INTEGER NOT NULL,
                     episode INTEGER NOT NULL,
                     episode_title TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
-                    PRIMARY KEY (title_id, person_id, episode_id)
+                    PRIMARY KEY (title_id, actor_id, episode_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS episode_cast (
@@ -120,22 +151,22 @@ def init_db() -> None:
 
                 CREATE TABLE IF NOT EXISTS episode_cast_members (
                     episode_id TEXT NOT NULL REFERENCES episode_cast(episode_id) ON DELETE CASCADE,
-                    person_id TEXT NOT NULL,
-                    PRIMARY KEY (episode_id, person_id)
+                    actor_id TEXT NOT NULL,
+                    PRIMARY KEY (episode_id, actor_id)
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_title_cast_person
-                    ON title_cast(person_id, fetched_at);
+                CREATE INDEX IF NOT EXISTS idx_title_cast_actor
+                    ON title_cast(actor_id, fetched_at);
                 CREATE INDEX IF NOT EXISTS idx_actor_episodes_lookup
-                    ON actor_episodes(title_id, person_id, fetched_at);
+                    ON actor_episodes(title_id, actor_id, fetched_at);
                 """
             )
             conn.execute(
                 """
-                INSERT OR IGNORE INTO actor_episode_fetches (title_id, person_id, fetched_at)
-                SELECT title_id, person_id, MAX(fetched_at)
+                INSERT OR IGNORE INTO actor_episode_fetches (title_id, actor_id, fetched_at)
+                SELECT title_id, actor_id, MAX(fetched_at)
                 FROM actor_episodes
-                GROUP BY title_id, person_id
+                GROUP BY title_id, actor_id
                 """
             )
             conn.commit()
@@ -174,10 +205,10 @@ def _purge_expired_locked(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM titles WHERE cast_fetched_at < ?", (cutoff,))
     conn.execute(
         """
-        DELETE FROM persons
-        WHERE imdb_id NOT IN (SELECT person_id FROM title_cast)
-          AND imdb_id NOT IN (SELECT person_id FROM actor_episodes)
-          AND imdb_id NOT IN (SELECT person_id FROM actor_episode_fetches)
+        DELETE FROM actors
+        WHERE imdb_id NOT IN (SELECT actor_id FROM title_cast)
+          AND imdb_id NOT IN (SELECT actor_id FROM actor_episodes)
+          AND imdb_id NOT IN (SELECT actor_id FROM actor_episode_fetches)
         """
     )
 
@@ -187,7 +218,7 @@ def _episode_rows_to_map(
 ) -> dict[tuple[str, str], list[EpisodeAppearance]]:
     grouped: dict[tuple[str, str], list[EpisodeAppearance]] = {}
     for row in rows:
-        key = (row["title_id"], row["person_id"])
+        key = (row["title_id"], row["actor_id"])
         grouped.setdefault(key, []).append(
             EpisodeAppearance(
                 imdb_id=row["episode_id"],
@@ -202,9 +233,9 @@ def _episode_rows_to_map(
 def _scoped_id_clauses(
     *,
     title_id: str | None,
-    person_id: str | None,
+    actor_id: str | None,
     title_ids: Iterable[str] | None,
-    person_ids: Iterable[str] | None,
+    actor_ids: Iterable[str] | None,
 ) -> tuple[list[str], list[object]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -220,15 +251,15 @@ def _scoped_id_clauses(
         clauses.append(f"title_id IN ({placeholders})")
         params.extend(ids)
 
-    if person_id is not None:
-        clauses.append("person_id = ?")
-        params.append(person_id)
-    elif person_ids is not None:
-        ids = list(person_ids)
+    if actor_id is not None:
+        clauses.append("actor_id = ?")
+        params.append(actor_id)
+    elif actor_ids is not None:
+        ids = list(actor_ids)
         if not ids:
             return [], []
         placeholders = ",".join("?" * len(ids))
-        clauses.append(f"person_id IN ({placeholders})")
+        clauses.append(f"actor_id IN ({placeholders})")
         params.extend(ids)
 
     return clauses, params
@@ -239,16 +270,16 @@ def _load_episode_map(
     cutoff: str,
     *,
     title_id: str | None = None,
-    person_id: str | None = None,
+    actor_id: str | None = None,
     title_ids: Iterable[str] | None = None,
-    person_ids: Iterable[str] | None = None,
+    actor_ids: Iterable[str] | None = None,
 ) -> dict[tuple[str, str], list[EpisodeAppearance]]:
     """Return stored episode lists for resolved actor/show pairs only."""
     scope_clauses, scope_params = _scoped_id_clauses(
         title_id=title_id,
-        person_id=person_id,
+        actor_id=actor_id,
         title_ids=title_ids,
-        person_ids=person_ids,
+        actor_ids=actor_ids,
     )
     if not scope_clauses:
         return {}
@@ -256,7 +287,7 @@ def _load_episode_map(
     fetch_where = " AND ".join(["fetched_at >= ?", *scope_clauses])
     fetch_rows = conn.execute(
         f"""
-        SELECT title_id, person_id
+        SELECT title_id, actor_id
         FROM actor_episode_fetches
         WHERE {fetch_where}
         """,
@@ -268,18 +299,18 @@ def _load_episode_map(
     episode_where = " AND ".join(["fetched_at >= ?", *scope_clauses])
     episode_rows = conn.execute(
         f"""
-        SELECT title_id, person_id, episode_id, season, episode, episode_title
+        SELECT title_id, actor_id, episode_id, season, episode, episode_title
         FROM actor_episodes
         WHERE {episode_where}
-        ORDER BY title_id ASC, person_id ASC, season ASC, episode ASC
+        ORDER BY title_id ASC, actor_id ASC, season ASC, episode ASC
         """,
         [cutoff, *scope_params],
     ).fetchall()
     episodes_by_pair = _episode_rows_to_map(episode_rows)
 
     return {
-        (row["title_id"], row["person_id"]): episodes_by_pair.get(
-            (row["title_id"], row["person_id"]), []
+        (row["title_id"], row["actor_id"]): episodes_by_pair.get(
+            (row["title_id"], row["actor_id"]), []
         )
         for row in fetch_rows
     }
@@ -305,14 +336,14 @@ def get_title_detail(imdb_id: str) -> TitleDetail | None:
             cast_rows = conn.execute(
                 """
                 SELECT
-                    p.imdb_id,
-                    p.name,
-                    p.headshot_url,
+                    a.imdb_id,
+                    a.name,
+                    a.headshot_url,
                     tc.role,
                     tc.episodes,
                     tc.billing_order
                 FROM title_cast tc
-                JOIN persons p ON p.imdb_id = tc.person_id
+                JOIN actors a ON a.imdb_id = tc.actor_id
                 WHERE tc.title_id = ? AND tc.fetched_at >= ?
                 ORDER BY tc.billing_order ASC
                 """,
@@ -327,7 +358,7 @@ def get_title_detail(imdb_id: str) -> TitleDetail | None:
                     conn,
                     cutoff,
                     title_id=imdb_id,
-                    person_ids=[row["imdb_id"] for row in cast_rows],
+                    actor_ids=[row["imdb_id"] for row in cast_rows],
                 )
 
             cast = [
@@ -384,18 +415,18 @@ def upsert_title_detail(detail: TitleDetail) -> None:
             for order, member in enumerate(detail.cast):
                 conn.execute(
                     """
-                    INSERT INTO persons (imdb_id, name, headshot_url)
+                    INSERT INTO actors (imdb_id, name, headshot_url)
                     VALUES (?, ?, ?)
                     ON CONFLICT(imdb_id) DO UPDATE SET
                         name = excluded.name,
-                        headshot_url = COALESCE(excluded.headshot_url, persons.headshot_url)
+                        headshot_url = COALESCE(excluded.headshot_url, actors.headshot_url)
                     """,
                     (member.imdb_id, member.name, member.headshot_url),
                 )
                 conn.execute(
                     """
                     INSERT INTO title_cast (
-                        title_id, person_id, role, episodes, billing_order, fetched_at
+                        title_id, actor_id, role, episodes, billing_order, fetched_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
@@ -413,15 +444,15 @@ def upsert_title_detail(detail: TitleDetail) -> None:
             conn.close()
 
 
-def get_person_titles(person_id: str) -> PersonTitlesResult:
+def get_actor_titles(actor_id: str) -> ActorTitlesResult:
     """List titles this actor appears in (from stored cast rows only)."""
     cutoff = _cutoff_iso()
     with _lock:
         conn = _connect()
         try:
             name_row = conn.execute(
-                "SELECT name FROM persons WHERE imdb_id = ?",
-                (person_id,),
+                "SELECT name FROM actors WHERE imdb_id = ?",
+                (actor_id,),
             ).fetchone()
             rows = conn.execute(
                 """
@@ -435,12 +466,12 @@ def get_person_titles(person_id: str) -> PersonTitlesResult:
                     tc.episodes
                 FROM title_cast tc
                 JOIN titles t ON t.imdb_id = tc.title_id
-                WHERE tc.person_id = ?
+                WHERE tc.actor_id = ?
                   AND tc.fetched_at >= ?
                   AND t.cast_fetched_at >= ?
                 ORDER BY t.title COLLATE NOCASE ASC
                 """,
-                (person_id, cutoff, cutoff),
+                (actor_id, cutoff, cutoff),
             ).fetchall()
             tv_title_ids = [
                 row["imdb_id"] for row in rows if _is_tv_kind(row["kind"])
@@ -448,12 +479,12 @@ def get_person_titles(person_id: str) -> PersonTitlesResult:
             episode_map = _load_episode_map(
                 conn,
                 cutoff,
-                person_id=person_id,
+                actor_id=actor_id,
                 title_ids=tv_title_ids,
             )
 
             titles = [
-                PersonTitleCredit(
+                ActorTitleCredit(
                     imdb_id=row["imdb_id"],
                     title=row["title"],
                     year=row["year"],
@@ -461,14 +492,14 @@ def get_person_titles(person_id: str) -> PersonTitlesResult:
                     poster_url=row["poster_url"],
                     role=row["role"],
                     episodes=row["episodes"],
-                    episode_list=episode_map.get((row["imdb_id"], person_id))
+                    episode_list=episode_map.get((row["imdb_id"], actor_id))
                     if _is_tv_kind(row["kind"])
                     else None,
                 )
                 for row in rows
             ]
-            return PersonTitlesResult(
-                person_id=person_id,
+            return ActorTitlesResult(
+                actor_id=actor_id,
                 name=name_row["name"] if name_row else None,
                 titles=titles,
             )
@@ -476,7 +507,7 @@ def get_person_titles(person_id: str) -> PersonTitlesResult:
             conn.close()
 
 
-def get_actor_episodes(title_id: str, person_id: str) -> list[EpisodeAppearance] | None:
+def get_actor_episodes(title_id: str, actor_id: str) -> list[EpisodeAppearance] | None:
     cutoff = _cutoff_iso()
     with _lock:
         conn = _connect()
@@ -485,9 +516,9 @@ def get_actor_episodes(title_id: str, person_id: str) -> list[EpisodeAppearance]
                 """
                 SELECT 1
                 FROM actor_episode_fetches
-                WHERE title_id = ? AND person_id = ? AND fetched_at >= ?
+                WHERE title_id = ? AND actor_id = ? AND fetched_at >= ?
                 """,
-                (title_id, person_id, cutoff),
+                (title_id, actor_id, cutoff),
             ).fetchone()
             if fetched is None:
                 return None
@@ -496,10 +527,10 @@ def get_actor_episodes(title_id: str, person_id: str) -> list[EpisodeAppearance]
                 """
                 SELECT episode_id, season, episode, episode_title
                 FROM actor_episodes
-                WHERE title_id = ? AND person_id = ? AND fetched_at >= ?
+                WHERE title_id = ? AND actor_id = ? AND fetched_at >= ?
                 ORDER BY season ASC, episode ASC
                 """,
-                (title_id, person_id, cutoff),
+                (title_id, actor_id, cutoff),
             ).fetchall()
             return [
                 EpisodeAppearance(
@@ -516,7 +547,7 @@ def get_actor_episodes(title_id: str, person_id: str) -> list[EpisodeAppearance]
 
 def upsert_actor_episodes(
     title_id: str,
-    person_id: str,
+    actor_id: str,
     episodes: Iterable[EpisodeAppearance],
 ) -> None:
     fetched_at = _iso(_utc_now())
@@ -526,30 +557,30 @@ def upsert_actor_episodes(
         try:
             _purge_expired_locked(conn)
             conn.execute(
-                "DELETE FROM actor_episodes WHERE title_id = ? AND person_id = ?",
-                (title_id, person_id),
+                "DELETE FROM actor_episodes WHERE title_id = ? AND actor_id = ?",
+                (title_id, actor_id),
             )
             conn.execute(
                 """
-                INSERT INTO actor_episode_fetches (title_id, person_id, fetched_at)
+                INSERT INTO actor_episode_fetches (title_id, actor_id, fetched_at)
                 VALUES (?, ?, ?)
-                ON CONFLICT(title_id, person_id) DO UPDATE SET
+                ON CONFLICT(title_id, actor_id) DO UPDATE SET
                     fetched_at = excluded.fetched_at
                 """,
-                (title_id, person_id, fetched_at),
+                (title_id, actor_id, fetched_at),
             )
             for ep in episode_list:
                 conn.execute(
                     """
                     INSERT INTO actor_episodes (
-                        title_id, person_id, episode_id, season, episode,
+                        title_id, actor_id, episode_id, season, episode,
                         episode_title, fetched_at
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         title_id,
-                        person_id,
+                        actor_id,
                         ep.imdb_id,
                         ep.season,
                         ep.episode,
@@ -574,17 +605,17 @@ def get_episode_cast_ids(episode_id: str) -> set[str] | None:
             if header is None:
                 return None
             rows = conn.execute(
-                "SELECT person_id FROM episode_cast_members WHERE episode_id = ?",
+                "SELECT actor_id FROM episode_cast_members WHERE episode_id = ?",
                 (episode_id,),
             ).fetchall()
-            return {row["person_id"] for row in rows}
+            return {row["actor_id"] for row in rows}
         finally:
             conn.close()
 
 
-def upsert_episode_cast_ids(episode_id: str, person_ids: Iterable[str]) -> None:
+def upsert_episode_cast_ids(episode_id: str, actor_ids: Iterable[str]) -> None:
     fetched_at = _iso(_utc_now())
-    ids = list(person_ids)
+    ids = list(actor_ids)
     with _lock:
         conn = _connect()
         try:
@@ -602,7 +633,7 @@ def upsert_episode_cast_ids(episode_id: str, person_ids: Iterable[str]) -> None:
                 (episode_id,),
             )
             conn.executemany(
-                "INSERT INTO episode_cast_members (episode_id, person_id) VALUES (?, ?)",
+                "INSERT INTO episode_cast_members (episode_id, actor_id) VALUES (?, ?)",
                 [(episode_id, pid) for pid in ids],
             )
             conn.commit()
