@@ -1,4 +1,4 @@
-import type { OverlapResult, TitleHit } from './types'
+import type { ActorEpisodesResult, OverlapResult, TitleHit } from './types'
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal })
@@ -35,4 +35,15 @@ export function getOverlap(
     u.searchParams.append('ids', id)
   }
   return getJson<OverlapResult>(u.pathname + u.search, signal)
+}
+
+export function getActorEpisodes(
+  titleId: string,
+  personId: string,
+  signal?: AbortSignal,
+): Promise<ActorEpisodesResult> {
+  const u = new URL('/api/actor-episodes', window.location.origin)
+  u.searchParams.set('title_id', titleId)
+  u.searchParams.set('person_id', personId)
+  return getJson<ActorEpisodesResult>(u.pathname + u.search, signal)
 }

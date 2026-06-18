@@ -24,6 +24,15 @@ class TitleHit(BaseModel):
     )
 
 
+class EpisodeAppearance(BaseModel):
+    """One episode an actor appears in within a TV series."""
+
+    imdb_id: str = Field(..., description="IMDB episode id without the 'tt' prefix.")
+    season: int
+    episode: int
+    title: str
+
+
 class CastMember(BaseModel):
     """One actor as they appear in a single title."""
 
@@ -69,6 +78,14 @@ class SharedActor(BaseModel):
     headshot_url: str | None = None
     roles: list[str | None] = Field(default_factory=list)
     episodes: list[int | None] = Field(default_factory=list)
+
+
+class ActorEpisodesResult(BaseModel):
+    """Episodes in which a person appears within a single TV series."""
+
+    title_id: str
+    person_id: str
+    episodes: list[EpisodeAppearance]
 
 
 class OverlapResult(BaseModel):

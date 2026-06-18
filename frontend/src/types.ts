@@ -14,6 +14,19 @@ export interface TitleSummary {
   poster_url: string | null
 }
 
+export interface EpisodeAppearance {
+  imdb_id: string
+  season: number
+  episode: number
+  title: string
+}
+
+export interface ActorEpisodesResult {
+  title_id: string
+  person_id: string
+  episodes: EpisodeAppearance[]
+}
+
 export interface SharedActor {
   imdb_id: string
   name: string

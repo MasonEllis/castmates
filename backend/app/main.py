@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import imdb_service
-from .models import OverlapResult, TitleDetail, TitleHit
+from .models import ActorEpisodesResult, OverlapResult, TitleDetail, TitleHit
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,36 @@ async def title(imdb_id: str) -> TitleDetail:
     except Exception as exc:
         logger.exception("get_title failed for imdb_id=%r", imdb_id)
         raise HTTPException(status_code=502, detail=f"IMDB lookup failed: {exc}") from exc
+
+
+@app.get("/api/actor-episodes", response_model=ActorEpisodesResult)
+async def actor_episodes(
+    title_id: Annotated[
+        str,
+        Query(min_length=1, description="IMDB series id (digits, no 'tt')."),
+    ],
+    person_id: Annotated[
+        str,
+        Query(min_length=1, description="IMDB person id (digits, no 'nm')."),
+    ],
+) -> ActorEpisodesResult:
+    try:
+        return await asyncio.to_thread(
+            imdb_service.get_actor_episodes,
+            title_id,
+            person_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception(
+            "actor_episodes failed for title_id=%r person_id=%r",
+            title_id,
+            person_id,
+        )
+        raise HTTPException(
+            status_code=502, detail=f"IMDB episode lookup failed: {exc}"
+        ) from exc
 
 
 @app.get("/api/overlap", response_model=OverlapResult)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import ActorEpisodeList from './ActorEpisodeList.vue'
 import type { SharedActor, TitleSummary } from '../types'
 
 const props = defineProps<{
@@ -99,6 +100,14 @@ function imdbPersonUrl(id: string): string {
 
 function imdbTitleUrl(id: string): string {
   return `https://www.imdb.com/title/tt${id}/`
+}
+
+function isTvTitle(kind: string | null): boolean {
+  return kind !== null && kind.toLowerCase().includes('tv')
+}
+
+function hasEpisodeCount(n: number | null | undefined): boolean {
+  return n !== null && n !== undefined && n > 0
 }
 
 function epLabel(n: number | null | undefined): string {
@@ -355,6 +364,12 @@ function selectSort(e: Event) {
                   {{ epLabel(actor.episodes[i]) }}
                 </span>
               </div>
+              <ActorEpisodeList
+                v-if="isTvTitle(t.kind) && hasEpisodeCount(actor.episodes[i])"
+                :title-id="t.imdb_id"
+                :person-id="actor.imdb_id"
+                :episode-count="actor.episodes[i]"
+              />
             </li>
           </ul>
         </div>
@@ -477,6 +492,16 @@ function selectSort(e: Event) {
                           v-if="actor.episodes[i] !== null && actor.episodes[i] !== undefined"
                           class="actor-detail__eps"
                         >{{ epLabel(actor.episodes[i]) }}</span>
+                      </dd>
+                      <dd
+                        v-if="isTvTitle(t.kind) && hasEpisodeCount(actor.episodes[i])"
+                        class="actor-detail__episode-block"
+                      >
+                        <ActorEpisodeList
+                          :title-id="t.imdb_id"
+                          :person-id="actor.imdb_id"
+                          :episode-count="actor.episodes[i]"
+                        />
                       </dd>
                     </div>
                   </dl>
@@ -1152,6 +1177,10 @@ tr.row-detail td {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
   font-weight: 600;
+}
+
+.actor-detail__episode-block {
+  margin: 8px 0 0;
 }
 
 /* Responsive ---------------------------------------------------- */

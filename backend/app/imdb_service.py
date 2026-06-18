@@ -15,14 +15,24 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Any
 
-from imdbinfo import get_movie as _imdb_get_movie
 from imdbinfo import search_title as _imdb_search_title
-from imdbinfo.services import request_json_url as _imdb_request_json_url
+from imdbinfo.exceptions import HTTPError, WAFError
+from imdbinfo.parsers import parse_json_bulked_episodes, parse_json_movie
+from imdbinfo.services import (
+    _delete_waf_cookie_file,
+    request_json_url as _imdb_request_json_url,
+)
+import imdbinfo.services as _imdb_services
 
 from .models import (
+    ActorEpisodesResult,
     CastMember,
+    EpisodeAppearance,
     OverlapResult,
     SharedActor,
     TitleDetail,
@@ -32,10 +42,69 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Pin WAF cookie storage to backend/.cache regardless of process cwd.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+_WAF_CACHE_DIR = _BACKEND_ROOT / ".cache" / "imdbinfo"
+_WAF_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_imdb_services._WAF_COOKIE_FILE = _WAF_CACHE_DIR / "waf_cookies.json"
+
+_RETRYABLE_STATUS = frozenset({202, 429, 503})
+
+
+def _imdb_page_url(path: str) -> str:
+    """Build an IMDB page URL without imdbinfo's empty-locale ``//`` bug."""
+    if not path.startswith("/"):
+        path = f"/{path}"
+    return f"https://www.imdb.com{path}"
+
+
+def _request_json_url(url: str, *, retries: int = 4) -> Any:
+    """Fetch embedded JSON from an IMDB page with retries on transient failures."""
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return _imdb_request_json_url(url)
+        except (HTTPError, WAFError) as exc:
+            last_exc = exc
+            status = getattr(exc, "status_code", None)
+            if status not in _RETRYABLE_STATUS or attempt == retries - 1:
+                raise
+            logger.warning(
+                "IMDB fetch attempt %s/%s failed for %s (%s); refreshing WAF cookies",
+                attempt + 1,
+                retries,
+                url,
+                exc,
+            )
+            _delete_waf_cookie_file()
+            time.sleep(1.5 * (2**attempt))
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError(f"IMDB fetch failed for {url}")
+
+
+def _imdb_get_movie(imdb_id: str) -> Any:
+    """Fetch title details using a corrected reference-page URL."""
+    norm = _normalize_id(imdb_id)
+    url = _imdb_page_url(f"/title/tt{norm}/reference")
+    raw = _request_json_url(url)
+    return parse_json_movie(raw)
+
+
 # Process-lifetime cache of fully-projected TitleDetail objects, keyed by the
 # normalized digit-only IMDB id.
 _title_cache: dict[str, TitleDetail] = {}
 _title_cache_lock = threading.Lock()
+
+# Process-lifetime cache of per-actor episode lists within a TV series.
+_episode_cache: dict[tuple[str, str], list[EpisodeAppearance]] = {}
+_episode_cache_lock = threading.Lock()
+
+# Cached bulk episode list per series + cast ids per episode (for actor filtering).
+_series_episodes_cache: dict[str, list[Any]] = {}
+_series_episodes_cache_lock = threading.Lock()
+_episode_cast_ids_cache: dict[str, set[str]] = {}
+_episode_cast_ids_cache_lock = threading.Lock()
 
 
 class TitleNotFoundError(LookupError):
@@ -174,8 +243,8 @@ def _fetch_full_cast(imdb_id: str) -> list[CastMember]:
     Raises any underlying HTTP / parse errors; the caller is expected to
     fall back to the reference-page cast when this raises.
     """
-    url = f"https://www.imdb.com/title/tt{imdb_id}/fullcredits/"
-    raw = _imdb_request_json_url(url)
+    url = _imdb_page_url(f"/title/tt{imdb_id}/fullcredits/")
+    raw = _request_json_url(url)
 
     categories = (
         raw.get("props", {})
@@ -206,6 +275,107 @@ def _fetch_full_cast(imdb_id: str) -> list[CastMember]:
         seen.add(member.imdb_id)
         members.append(member)
     return members
+
+
+def _get_series_episodes(title_id: str) -> list[Any]:
+    """Return the bulk episode list for a TV series (cached)."""
+    norm = _normalize_id(title_id)
+    with _series_episodes_cache_lock:
+        cached = _series_episodes_cache.get(norm)
+    if cached is not None:
+        return cached
+
+    url = _imdb_page_url(
+        f"/search/title/?count=250&series=tt{norm}&sort=release_date,asc"
+    )
+    raw = _request_json_url(url)
+    episodes = parse_json_bulked_episodes(raw)
+    with _series_episodes_cache_lock:
+        _series_episodes_cache[norm] = episodes
+    return episodes
+
+
+def _episode_cast_person_ids(episode_id: str) -> set[str]:
+    """Return the cast person ids credited on a single episode (cached)."""
+    norm = _normalize_id(episode_id)
+    with _episode_cast_ids_cache_lock:
+        cached = _episode_cast_ids_cache.get(norm)
+    if cached is not None:
+        return cached
+
+    members = _fetch_full_cast(norm)
+    person_ids = {member.imdb_id for member in members}
+    with _episode_cast_ids_cache_lock:
+        _episode_cast_ids_cache[norm] = person_ids
+    return person_ids
+
+
+def _project_bulk_episode(ep: Any) -> EpisodeAppearance | None:
+    """Project an imdbinfo ``BulkedEpisode`` into our episode DTO."""
+    imdb_id = getattr(ep, "imdb_id", None)
+    title = getattr(ep, "title", None)
+    season = getattr(ep, "season_number", None)
+    episode_no = getattr(ep, "episode_number", None)
+    if not imdb_id or not title:
+        return None
+    try:
+        season_int = int(season)
+        episode_int = int(episode_no)
+    except (TypeError, ValueError):
+        return None
+    return EpisodeAppearance(
+        imdb_id=str(imdb_id),
+        season=season_int,
+        episode=episode_int,
+        title=str(title),
+    )
+
+
+def fetch_actor_episodes_for_show(title_id: str, person_id: str) -> list[EpisodeAppearance]:
+    """Return the episodes in which ``person_id`` appears in ``title_id``.
+
+    IMDB's ``?nm=`` filter on the episodes page no longer works, so we load the
+    series' episode list once and match against each episode's cast. Episode
+    cast and the final per-actor result are cached for the process lifetime.
+    """
+    norm_title = _normalize_id(title_id)
+    norm_person = _normalize_id(person_id)
+    cache_key = (norm_title, norm_person)
+    with _episode_cache_lock:
+        cached = _episode_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    series_episodes = _get_series_episodes(norm_title)
+    appearances: list[EpisodeAppearance] = []
+
+    def _match_episode(ep: Any) -> EpisodeAppearance | None:
+        ep_id = getattr(ep, "imdb_id", None)
+        if not ep_id or norm_person not in _episode_cast_person_ids(str(ep_id)):
+            return None
+        return _project_bulk_episode(ep)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for match in pool.map(_match_episode, series_episodes):
+            if match is not None:
+                appearances.append(match)
+
+    appearances.sort(key=lambda item: (item.season, item.episode))
+
+    with _episode_cache_lock:
+        _episode_cache[cache_key] = appearances
+    return appearances
+
+
+def get_actor_episodes(title_id: str, person_id: str) -> ActorEpisodesResult:
+    """Fetch (and cache) the episodes a person appears in for a TV series."""
+    norm_title = _normalize_id(title_id)
+    norm_person = _normalize_id(person_id)
+    return ActorEpisodesResult(
+        title_id=norm_title,
+        person_id=norm_person,
+        episodes=fetch_actor_episodes_for_show(norm_title, norm_person),
+    )
 
 
 def search_titles(query: str, limit: int = 8) -> list[TitleHit]:
